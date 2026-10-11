@@ -1,0 +1,13 @@
+import { test } from 'vitest'; import assert from 'node:assert/strict';
+import { HANDLERS, META } from '../src/engine/handlers.js'; import { run, makeEvent } from '../src/engine/sim.js'; import { check, primary } from '../src/engine/oracle.js';
+import { baselineSuite, generate } from '../src/engine/suites.js'; import { minimize } from '../src/engine/minimize.js'; import { runSuite, experiment } from '../src/experiment/experiment.js';
+const E=(s:string,q:number,o?:any,f?:string)=>({event:makeEvent('p',s,q,o),...(f?{fault:f}:{})});
+const viol=(h,plan)=>check(plan,run(HANDLERS[h],plan));
+test('correct reference passes baseline and 300 generated cases',()=>{assert.equal(runSuite(baselineSuite,'correct').failing.length,0);assert.equal(runSuite(generate(1337,300),'correct').failing.length,0);assert.equal(runSuite(generate(7,300),'correct').failing.length,0);});
+const T:Record<string,any>={D1:[E('authorized',1),E('captured',2),E('authorized',1),E('captured',2)],D2:[E('captured',2),E('authorized',1)],D3:[E('authorized',1),E('captured',2,{},'mid')],D4:[E('captured',2,{noSig:true})],D5:[E('captured',2),E('authorized',1)]};
+for(const h of Object.keys(META)) test(`${h} trigger violates ${META[h].intended}`,()=>{assert.ok(viol(h,T[h]).some(v=>v.inv===META[h].intended),JSON.stringify(viol(h,T[h])));assert.deepEqual(viol('correct',T[h]),[]);});
+test('minimizer shrinks a failing sequence and keeps it failing',()=>{const big=[E('authorized',1),E('captured',2),E('authorized',1,{},'pre'),E('captured',2),E('captured',2)];
+  const inv=primary(viol('D1',big));const m=minimize(HANDLERS.D1,big,inv);assert.ok(m.length<big.length);assert.ok(viol('D1',m).some(v=>v.inv===inv));});
+test('minimizer leaves a passing sequence unchanged',()=>{const ok=[E('authorized',1),E('captured',2)];assert.equal(minimize(HANDLERS.correct,ok,'INV1'),ok);});
+test('generator is deterministic per seed',()=>{assert.deepEqual(generate(5,50),generate(5,50));assert.notDeepEqual(generate(5,50),generate(6,50));});
+test('experiment is reproducible (same fingerprint)',()=>{assert.equal(experiment().fingerprint,experiment().fingerprint);});

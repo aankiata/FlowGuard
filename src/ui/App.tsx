@@ -1,0 +1,63 @@
+import { useEffect, useState, type ReactNode } from 'react';
+import type { Report } from '../experiment/report'; import { loadReport } from './loadReport'; import { Tip, Num, InvBanner, Repro, Timeline, Verdict, DetectionMatrix, BudgetChart } from './viz';
+const TABS = ['Overview', 'Comparison', 'Investigation', 'CI decision', 'Robustness', 'Docs'];
+const cls = (ok: boolean | string) => (ok === true || ok === 'PASS' ? 'ok' : ok === false || ok === 'FAIL' ? 'bad' : 'warn');
+function Copy({ text, label = 'Copy' }: { text: string; label?: string }) {
+  const [d, setD] = useState(false);
+  return <button className="s" onClick={() => { try { navigator.clipboard.writeText(text); } catch {} setD(true); setTimeout(() => setD(false), 1200); }}>{d ? 'Copied' : label}</button>;
+}
+const Card = ({ children }: { children: ReactNode }) => <div className="card">{children}</div>;
+const Cmd = ({ c }: { c: string }) => <div className="row"><code>{c}</code><Copy text={c} label="Copy command" /></div>;
+// Presentational reduction of the recorded trace (state after each delivery) — no test logic.
+function stateAfter(trace: any[], upto: number) { const s: Record<string, string> = {}; let n = 0; for (const l of trace) { if (l.delivery > upto) break; if (l.k === 'apply') s[l.eventId.split('_')[1]] = l.to; if (l.k === 'fulfill') n++; } return { s, n }; }
+
+export function App() {
+  const [R, setR] = useState<Report | null>(null), [err, setErr] = useState(''), [tab, setTab] = useState(0), [sel, setSel] = useState(''), [ci, setCi] = useState('correct'), [step, setStep] = useState(-1);
+  useEffect(() => { loadReport().then(r => { setR(r); setSel(Object.keys(r.meta).find(h => !r.exp.handlers[h].baselineDetected) ?? 'D1'); }).catch(e => setErr(String(e.message ?? e))); }, []);
+  if (err) return <main><Card><h2>Could not load report</h2><p className="mut">{err}</p></Card></main>;
+  if (!R) return <main><p className="mut">Loading report…</p></main>;
+  const T = R.exp.totals, H = R.exp.handlers, DEF = Object.keys(R.meta), cfg = R.exp.config;
+  const badge = (ok: boolean | string, t: string) => <span className={`badge ${cls(ok)}`}>{t}</span>;
+  const x = T.additionalByFlowGuard.length;
+  const overview = <>
+    <div className="hero"><div><h1>Find payment-integration bugs your normal test suite misses</h1><p>Adversarial webhook sequences — duplicates, delays, reordering, mid-handler failures — checked against explicit invariants. {x} extra seeded defect{x === 1 ? '' : 's'} found beyond a conventional baseline in this experiment.</p><div className="row"><button className="b" onClick={() => setTab(2)}>Investigate a failure</button><button className="s" style={{ background: 'transparent', color: '#fff', borderColor: '#5a78a8' }} onClick={() => setTab(3)}>CI decision</button></div></div></div>
+    <main><Card><h2>Experiment overview</h2><p className="mut">Hypothesis: adversarial lifecycle sequences expose distinct merchant-handler bugs that a conventional integration suite misses.</p>
+      <p>{badge(R.exp.verdict.startsWith('PROV') ? 'warn' : false, R.exp.verdict)} <span className="mut">Seed {cfg.seed}, {cfg.cases} generated cases · fingerprint {R.exp.fingerprint}</span></p>
+      {Object.values(R.rob.augmentedBaseline).every(Boolean) && <p className="mut"><b>Caveat:</b> two extra hand-written baseline tests would also catch all {T.seededDefects} seeded defects (see Robustness), and the defects share one author. Read the result as a proof of concept.</p>}
+      <div className="grid">{[['Baseline detected', `${T.baselineDetected.length} / ${T.seededDefects}`], ['FlowGuard detected', `${T.flowguardDetected.length} / ${T.seededDefects}`], ['Additional distinct defects', `${x} (${T.additionalByFlowGuard.join(', ')})`], ['Reproduction', T.reproduction], ['Runtime (base / FG)', `${T.runtimeMs.baseline} / ${T.runtimeMs.flowguard} ms`], ['False positives', T.falsePositives.baseline + T.falsePositives.flowguard]].map(([k, v]) => <div className="m" key={k as string}><small>{k}</small><b><Num v={v as any} /></b></div>)}</div>
+      <h3>Validation gate</h3><table><tbody>{R.exp.gate.map((g: any) => <tr key={g.criterion}><td>{g.criterion}</td><td><Tip text={g.result === 'PASS' ? 'Checked automatically by the experiment runner.' : g.result === 'FAIL' ? 'Automated check failed.' : 'Not automated: needs an independent human review (see EVALUATION.md).'}>{badge(g.result, g.result)}</Tip></td></tr>)}</tbody></table>
+      <Cmd c="npm run experiment" /><p className="mut">Snapshot of engine output (report.json). Browsers can't run the Node engine: re-run locally and rebuild. Five seeded defects is a proof of concept only.</p></Card></main></>;
+  const comparison = <Card><h2>Baseline vs FlowGuard</h2><p className="mut">Experimental · seed {cfg.seed} · same simulator, handlers and oracle for both suites.</p><div className="scroll"><table><tbody>
+    <tr><th></th><th>Baseline</th><th>FlowGuard</th></tr><tr><td><Tip text="Test runs across the reference plus 5 defective handlers: 9 baseline tests and the generated cases each run once per handler.">Tests executed (6 handlers)</Tip></td><td>{T.executions.baseline}</td><td>{T.executions.flowguard}</td></tr>
+    <tr><td><Tip text="Counted per underlying seeded defect (one per handler), not per failing test.">Distinct defects detected</Tip></td><td>{T.baselineDetected.join(', ')}</td><td>{T.flowguardDetected.join(', ')}</td></tr><tr><td><Tip text="Defects FlowGuard detected that the baseline did not.">Beyond baseline</Tip></td><td>–</td><td>{T.additionalByFlowGuard.join(', ')}</td></tr>
+    <tr><td><Tip text="Wall-clock time for running each suite against all 6 handlers. Excludes minimization.">Runtime</Tip></td><td>{T.runtimeMs.baseline} ms</td><td>{T.runtimeMs.flowguard} ms</td></tr><tr><td><Tip text="Failures reported against the correct reference handler. Must be 0.">False positives (reference)</Tip></td><td>{T.falsePositives.baseline}</td><td>{T.falsePositives.flowguard}</td></tr><tr><td><Tip text="Minimized sequences re-run 20 times each from a fresh JSON copy; all must fail with the same invariant.">Reproduction</Tip></td><td>–</td><td>{T.reproduction} ({T.minimizedReproductions} minimized)</td></tr></tbody></table></div>
+    <h3>Detection matrix</h3><DetectionMatrix R={R} /><h3>Per defect</h3><div className="scroll"><table><tbody><tr><th>Seeded defect</th><th>Baseline</th><th>FlowGuard</th><th><Tip text="Failing test cases: baseline suite / FlowGuard suite. Not a defect count.">Failing cases (A / B)</Tip></th><th><Tip text="Distinct minimized failing-sequence shapes found (first 25 failures); one defect can have several shapes.">Minimized shapes</Tip></th></tr>
+    {DEF.map(h => <tr key={h}><td><b>{h}</b> {R.meta[h].defect}</td><td>{badge(H[h].baselineDetected, H[h].baselineDetected ? 'detected' : 'missed')}</td><td>{badge(H[h].flowguardDetected, H[h].flowguardDetected ? 'detected' : 'missed')}</td><td>{H[h].baselineFails} / {H[h].flowguardFails}</td><td>{H[h].distinctMinimizedShapes ?? '–'}</td></tr>)}</tbody></table></div>
+    <p className="mut">Failing case counts are not defect counts: each handler is one underlying defect.</p></Card>;
+  const m = H[sel]?.minimal, meta = R.meta[sel];
+  const invest = m && <Card><h2>Failure investigation</h2><div className="row">{DEF.map(h => <button key={h} className={`s ${h === sel ? 'on' : ''}`} onClick={() => { setSel(h); setStep(-1); }}>{h}{H[h].baselineDetected ? '' : ' · new'}</button>)}</div>
+    <h3>A. What happened</h3><p>{meta.defect} <span className="mut">Why plausible: {meta.why}</span></p>
+    <h3>B. Invariant violated</h3><InvBanner inv={m.invariant} name={m.name} msgs={m.violations.map((v: any) => v.msg)} /><h3>C. Event timeline (delivery order)</h3><Timeline m={m} step={step} setStep={setStep} /><h3>D. Minimal reproduction ({m.deliveries} deliveries)</h3><Repro text={m.sequence} /><div className="row"><Copy text={m.sequence} label="Copy reproduction" />{badge(true, `reproduced ${m.reproduced}`)}</div>
+    <h3>E. Expected vs observed</h3><div className="two"><Card><b>Expected</b><br />{meta.expected}</Card><Card><b>Observed</b><br />{meta.observed}</Card></div>
+    <h3>F. Root cause (fixture metadata + trace)</h3><p>{meta.defect} Trigger: <code>{meta.trigger}</code>.</p><h3>G. Reproduce locally</h3><Cmd c={`npm run ci -- --handler=${sel} --seed=${cfg.seed}`} /></Card>;
+  const r = R.ci[ci];
+  const cidec = <Card><h2>CI release decision</h2><div className="row">{['correct', ...DEF].map(h => <button key={h} className={`s ${h === ci ? 'on' : ''}`} onClick={() => setCi(h)}>{h}</button>)}</div>
+    <Verdict r={r} />
+    {r.failing ? <><p>Failing sequence: <code>{r.failing}</code> · invariant <b>{r.invariant}</b></p><Repro text={r.reproduction} title={r.failing} /></> : <p className="mut">{r.note ?? r.error}</p>}
+    <p className="mut">PASS means no violations in the executed sequences; it does not prove an integration is bug-free.</p><Cmd c={`npm run ci -- --handler=${ci}`} />
+    <h3>Machine-readable summary</h3><pre>{JSON.stringify(r, null, 2)}</pre><Copy text={JSON.stringify(r, null, 2)} label="Copy JSON" /></Card>;
+  const B = R.rob, S = B.seedSweep;
+  const robust = <Card><h2>Robustness &amp; skeptical checks</h2><p className="mut">These test how fragile the headline finding is.</p>
+    <h3>Seed sweep ({S.seeds} seeds × {S.casesPerSeed} cases)</h3><p>Reference false positives: {badge(S.referenceFalsePositives === 0, String(S.referenceFalsePositives))} · oracle sanity: {badge(B.oracleSanity, B.oracleSanity ? 'pass' : 'fail')}</p>
+    <div className="scroll"><table><tbody><tr><th>Defect</th><th><Tip text="Seeds (of 30) in which the defect was found within 300 generated cases.">Detected in seeds</Tip></th><th><Tip text="Median number of generated cases run before the first failure for this defect.">Median cases to first detection</Tip></th></tr>{DEF.map(h => <tr key={h}><td>{h}</td><td>{S.perDefect[h].detectedInSeeds}</td><td>{S.perDefect[h].medianCasesToFirstDetection}</td></tr>)}</tbody></table></div>
+    <h3>Detection vs search budget</h3><BudgetChart R={R} /><h3>Search budget table</h3><div className="scroll"><table><tbody><tr><th>Cases</th>{DEF.map(h => <th key={h}>{h}</th>)}</tr>{Object.keys(B.budget).map(n => <tr key={n}><td>{n}</td>{DEF.map(h => <td key={h}>{B.budget[n][h]}</td>)}</tr>)}</tbody></table></div>
+    <h3>Baseline sensitivity — key caveat</h3><p>Adding two hand-written tests to the baseline:</p><p>{Object.entries(B.augmentedBaseline).map(([h, v]) => <span key={h}>{badge(v as boolean, `${h} ${v ? 'caught' : 'missed'}`)} </span>)}</p>
+    <p><b>Reading:</b> FlowGuard's edge here is finding these failure classes without someone having to think of them, not finding bugs a careful engineer couldn't. Defects, baseline and generator share one author.</p><Cmd c="npm run robustness" /></Card>;
+  const docs = <Card><h2>Integration &amp; documentation</h2><h3>Quick start (Node ≥ 20)</h3><pre>{`npm install\nnpm test\nnpm run baseline\nnpm run flowguard\nnpm run experiment\nnpm run ci -- --handler=D3\nnpm run dev      # UI (after: npm run report)`}</pre>
+    <h3>HTTP adapter</h3><p>A target implements <code>POST /reset</code>, <code>POST /webhook</code> (event, fault, attempt, n; 5xx = retry) and <code>GET /audit</code>. <code>npm run http-check</code> drives the prototype handlers over real HTTP and checks results match in-process runs. Not yet run against real merchant code; <code>fault</code> needs a test-mode hook in the target.</p>
+    <h3>Known limitations</h3><ul><li>Synthetic simulator; semantics are my model, not Razorpay's.</li><li>Defects, baseline and generator share one author; 5 defects is a proof of concept.</li><li>Bounded search (≤9 deliveries, 300 cases): PASS is not proof of correctness.</li><li>Brand blue #2B84EA is unverified.</li></ul><p>No Razorpay credentials or production transactions are required or used. All data is synthetic.</p></Card>;
+  return <><header><div className="top"><div className="brand"><i>⇄</i><span>Flow<span className="t">Guard</span></span> <span style={{ fontWeight: 400, fontSize: 14, color: '#b9c8e6' }}>payment lifecycle fuzzer</span></div><div className="disc">Independent prototype — not an official Razorpay product.</div></div>
+    <nav>{TABS.map((t, i) => <button key={t} className={i === tab ? 'on' : ''} onClick={() => setTab(i)}>{t}</button>)}</nav></header>
+    {tab === 0 ? overview : <main>{[null, comparison, invest, cidec, robust, docs][tab]}</main>}
+    <footer>FlowGuard is an independent experimental prototype. It is not an official Razorpay product, is not endorsed by Razorpay, and uses only synthetic data.</footer></>;
+}
