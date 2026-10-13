@@ -47,7 +47,7 @@ const reduced = () => !!window.matchMedia?.('(prefers-reduced-motion: reduce)').
 export function Num({ v }: { v: string | number }) {
   const t = String(v), [p, setP] = useState(reduced() ? 1 : 0);
   useEffect(() => { if (p >= 1) return; const raf = window.requestAnimationFrame || ((f: FrameRequestCallback) => window.setTimeout(() => f(performance.now()), 16)); const t0 = performance.now(); let on = true;
-    const tick = (n: number) => { if (!on) return; const q = Math.min(1, (n - t0) / 900); setP(q); if (q < 1) raf(tick); }; raf(tick); return () => { on = false; }; }, []);
+    const tick = () => { if (!on) return; const q = Math.min(1, Math.max(0, (performance.now() - t0) / 900)); setP(q); if (q < 1) raf(tick); }; raf(tick); return () => { on = false; }; }, []);
   const e = 1 - Math.pow(1 - p, 3);
   return <>{p >= 1 ? t : t.replace(/(?<![A-Za-z])\d+(?:\.\d+)?/g, x => (parseFloat(x) * e).toFixed((x.split('.')[1] || '').length))}</>;
 }

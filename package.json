@@ -15,7 +15,8 @@
   "report": "tsx src/cli.ts report",
   "dev": "vite",
   "build": "npm run report && vite build",
-  "verify": "npm run typecheck && npm test && npm run experiment && npm run robustness && npm run http-check"
+  "verify": "npm run typecheck && npm test && npm run experiment && npm run robustness && npm run http-check",
+   "build:single": "npm run report && vite build --mode embed && node scripts/inline.mjs"
  },
  "devDependencies": {
   "@testing-library/react": "^16.3.3",
@@ -29,7 +30,6 @@
   "tsx": "^4.23.15",
   "typescript": "^7.0.2",
   "vite": "^8.3.4",
-  "vite-plugin-singlefile": "^2.3.3",
   "vitest": "^5.0.3"
  }
 }

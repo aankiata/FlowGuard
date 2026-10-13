@@ -32,3 +32,12 @@ test('table and matrix tooltips appear on focus and carry real numbers', async (
   fireEvent.blur(screen.getByText('False positives (reference)'));
   const cell = document.querySelector('.mx .tipx.plain')!; fireEvent.focus(cell); expect(screen.getByRole('tooltip').textContent).toMatch(/of 9 hand-written tests|generated cases/);
 });
+
+import { Num } from '../src/ui/viz';
+test('count-up never shows negative numbers even when frame timestamps are skewed', async () => {
+  const orig = window.requestAnimationFrame; let calls = 0;
+  window.requestAnimationFrame = ((cb: FrameRequestCallback) => window.setTimeout(() => cb(calls++ < 1000 ? -1e6 : performance.now()), 5)) as any;
+  const { container } = render(<Num v="3 / 5 (D1) 4.17 ms" />);
+  await new Promise(r => setTimeout(r, 40)); expect(container.textContent).not.toMatch(/-/);
+  window.requestAnimationFrame = orig; await waitFor(() => expect(container.textContent).toBe('3 / 5 (D1) 4.17 ms'), { timeout: 3000 });
+});
